@@ -1,28 +1,28 @@
 import os
 import json
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, BotoCoreError
+from datetime import datetime
+import uuid
 
-# Configure your region and model ID
+# Environment variables
 REGION   = os.environ.get("AWS_REGION", "us-east-1")
-MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
+DDB_TABLE = os.environ.get("DDB_TABLE", "ER_Triage")
 
-client = boto3.client("bedrock-runtime", region_name=REGION)
+# AWS clients
+bedrock_client = boto3.client("bedrock-runtime", region_name=REGION)
+ddb_client = boto3.client("dynamodb", region_name=REGION)
 
 def build_prompt(patients, staff):
-    """
-    Build the ER scheduling prompt.
-    patients and staff are Python lists of dicts.
-    """
     return f"""
 You are an Emergency Room (ER) scheduling assistant.
-
 Your job:
-- Triage patients, assign available staff, and estimate wait times.
-- Always prioritize patients by severity: critical > medium > low.
-- For equal severity, break ties by earlier arrival_time.
-- Balance staff load evenly when possible.
-- All times are minutes and arrival_time is ISO 8601.
+- Triage patients, assign available staff, estimate wait times.
+- Prioritize patients: critical > medium > low.
+- Break ties by earlier arrival_time.
+- Balance staff load evenly.
+- All times in minutes; arrival_time is ISO 8601.
 
 INPUT DATA:
 Patients:
@@ -32,34 +32,41 @@ Staff:
 {json.dumps(staff, indent=2)}
 
 OUTPUT FORMAT:
-Output ONLY valid JSON, with this schema:
+Return ONLY valid JSON:
 {{
   "triage_order": ["P1","P2","P3"],
   "assignments": [
     {{ "patient_id": "P1", "doctor_id": "D2", "wait_time_minutes": 0 }}
   ],
-  "summary": "Short human-readable summary (1-2 sentences)"
+  "summary": "Short 1-2 sentence summary"
 }}
-
-If no valid assignment is possible, set doctor_id to null and explain in summary.
 """
 
+def save_to_dynamodb(request_id, patients, staff, triage_result):
+    try:
+        ddb_client.put_item(
+            TableName=DDB_TABLE,
+            Item={
+                "request_id": {"S": request_id},
+                "timestamp": {"S": datetime.utcnow().isoformat()},
+                "input_patients": {"S": json.dumps(patients)},
+                "input_staff": {"S": json.dumps(staff)},
+                "triage_result": {"S": json.dumps(triage_result)}
+            }
+        )
+    except ClientError as e:
+        print("DynamoDB error:", e)
+
 def lambda_handler(event, context):
-    """
-    Lambda entry point.
-    Expects an API Gateway (HTTP API) event with JSON body:
-    {
-      "patients": [...],
-      "staff": [...]
-    }
-    """
+    request_id = str(uuid.uuid4())
+
     try:
         body = json.loads(event.get("body", "{}"))
         patients = body.get("patients", [])
-        staff    = body.get("staff", [])
+        staff = body.get("staff", [])
 
         if not patients or not staff:
-            return _response(400, {"error": "Missing 'patients' or 'staff' in request body"})
+            return respond(400, {"error": "Missing 'patients' or 'staff' in request body"})
 
         prompt = build_prompt(patients, staff)
 
@@ -67,42 +74,34 @@ def lambda_handler(event, context):
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 400,
             "temperature": 0.2,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
+            "messages": [{"role": "user", "content": prompt}]
         })
 
-        resp = client.invoke_model(
-            modelId=MODEL_ID,
-            body=bedrock_body
-        )
+        resp = bedrock_client.invoke_model(modelId=MODEL_ID, body=bedrock_body)
+        raw_text = json.loads(resp["body"].read())["content"][0]["text"]
 
-        raw = json.loads(resp['body'].read())
-        model_text = raw["content"][0]["text"]
-
-        # Parse JSON produced by the model
+        # Parse Bedrock JSON
         try:
-            parsed = json.loads(model_text)
+            triage_result = json.loads(raw_text)
         except json.JSONDecodeError:
-            return _response(502, {
-                "error": "Model returned non-JSON response",
-                "raw_output": model_text
-            })
+            triage_result = {"error": "Model returned invalid JSON", "raw_output": raw_text}
 
-        return _response(200, parsed)
+        # Save request to DynamoDB
+        save_to_dynamodb(request_id, patients, staff, triage_result)
 
-    except ClientError as e:
-        return _response(500, {"error": f"AWS error: {str(e)}"})
+        return respond(200, {"request_id": request_id, "result": triage_result})
+
+    except (ClientError, BotoCoreError) as e:
+        return respond(500, {"error": f"AWS error: {str(e)}"})
     except Exception as e:
-        return _response(500, {"error": str(e)})
+        return respond(500, {"error": str(e)})
 
-def _response(status, body):
-    """Helper to format API Gateway compatible JSON response."""
+def respond(status, body):
     return {
         "statusCode": status,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*"   # allow CORS if needed
+            "Access-Control-Allow-Origin": "*"
         },
         "body": json.dumps(body)
     }

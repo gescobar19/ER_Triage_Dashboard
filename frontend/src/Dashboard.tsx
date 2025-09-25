@@ -1,136 +1,211 @@
 import React, { useEffect, useState } from "react";
 import {
-  Container,
-  Typography,
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Box,
-  Grid,
-  Card,
-  CardContent
+  Container, Typography, Paper, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, Box, Chip, TextField,
+  Button, MenuItem
 } from "@mui/material";
-import { postTriage } from "./api";
+import { postTriage, addPatient } from "./api";
+
+interface Patient {
+  id: string;
+  name: string;
+  severity: "critical" | "medium" | "low";
+  arrival_time: string;
+  treatment_duration: number;
+}
+
+interface Staff {
+  id: string;
+  name: string;
+  specialization: string;
+  available: boolean;
+}
+
+interface Assignment {
+  patient_id: string;
+  doctor_id: string | null;
+  wait_time_minutes: number;
+}
+
+interface TriageResult {
+  triage_order: string[];
+  assignments: Assignment[];
+  summary: string;
+}
 
 export default function Dashboard() {
-  const [data, setData] = useState<any>(null);
-  const [patients, setPatients] = useState<any[]>([
-    { id: "P1", name: "Alice", severity: "critical", arrival_time: new Date().toISOString(), treatment_duration: 30 }
-  ]);
-  const [staff, setStaff] = useState<any[]>([
-    { id: "D1", name: "Dr. Lee", specialization: "general", available: true }
-  ]);
+  const [data, setData] = useState<TriageResult | null>(null);
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [newPatient, setNewPatient] = useState<{
+    id: string;
+    name: string;
+    severity: "critical" | "medium" | "low";
+    treatment_duration: number;
+  }>({
+    id: "",
+    name: "",
+    severity: "critical",
+    treatment_duration: 20
+  });
 
-  const severityColor = (severity: string) =>
-    severity === "critical" ? "#ffebee" :
-    severity === "medium" ? "#fff3e0" :
-    severity === "low" ? "#e8f5e9" : "inherit";
-
-  const fetchTriage = async () => {
-    const result = await postTriage(patients, staff);
-    setData(result);
+  const severityColors: Record<Patient["severity"], string> = {
+    critical: "#ffcccc",
+    medium: "#fff3cd",
+    low: "#d4edda"
   };
 
-  // Function to simulate new patient arrival
-  const addRandomPatient = () => {
-    const id = `P${patients.length + 1}`;
-    const names = ["Bob", "Carol", "Dave", "Eve", "Frank"];
-    const severities: ("critical" | "medium" | "low")[] = ["critical", "medium", "low"];
-    const patient = {
-      id,
-      name: names[Math.floor(Math.random() * names.length)],
-      severity: severities[Math.floor(Math.random() * severities.length)],
-      arrival_time: new Date().toISOString(),
-      treatment_duration: 20 + Math.floor(Math.random() * 20) // 20–40 min
-    };
-    setPatients((prev) => [...prev, patient]);
+  // Add new patient handler
+  const handleAddPatient = async () => {
+    const patient: Patient = { ...newPatient, arrival_time: new Date().toISOString() };
+    try {
+      await addPatient(patient); // Ensure Lambda expects this shape
+      setPatients((prev) => [...prev, patient]);
+      setNewPatient({ id: "", name: "", severity: "critical", treatment_duration: 20 });
+    } catch (err) {
+      console.error("Error adding patient:", err);
+    }
   };
 
+  // Simulated initial data
   useEffect(() => {
-    fetchTriage();
+    const initialPatients: Patient[] = [
+      { id: "P1", name: "Alice", severity: "critical", arrival_time: new Date().toISOString(), treatment_duration: 30 }
+    ];
+    const initialStaff: Staff[] = [
+      { id: "D1", name: "Dr. Lee", specialization: "general", available: true }
+    ];
+    setPatients(initialPatients);
+    setStaff(initialStaff);
+  }, []);
 
-    // Refresh triage every 30 seconds
-    const refreshInterval = setInterval(fetchTriage, 30000);
+  // Fetch triage results whenever patients/staff change
+  useEffect(() => {
+    if (patients.length && staff.length) {
+      postTriage(patients, staff)
+        .then((res) => setData(res.result))
+        .catch((err) => console.error("API error:", err));
+    }
+  }, [patients, staff]);
 
-    // Add a new patient every 1–2 minutes
-    const simulationInterval = setInterval(addRandomPatient, 60000 + Math.random() * 60000);
+  if (!data) return <Typography sx={{ mt: 4 }}>Loading...</Typography>;
 
-    return () => {
-      clearInterval(refreshInterval);
-      clearInterval(simulationInterval);
-    };
-  }, [patients]);
-
-  if (!data) return <Typography variant="h6">Loading...</Typography>;
-
-  const { triage_order, assignments, summary } = data.result;
+  const severityRank = { critical: 0, medium: 1, low: 2 };
+  const sortedPatients = [...data.triage_order].sort((a, b) => {
+    const pa = patients.find((p) => p.id === a);
+    const pb = patients.find((p) => p.id === b);
+    return (pa ? severityRank[pa.severity] : 3) - (pb ? severityRank[pb.severity] : 3);
+  });
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
-      <Typography variant="h3" gutterBottom>🚑 ER Triage Dashboard</Typography>
+      <Typography variant="h4" gutterBottom>🚑 ER Triage Dashboard</Typography>
+
+      {/* New Patient Form */}
+      <Paper sx={{ p: 2, mb: 4 }}>
+        <Typography variant="h6">Add New Patient</Typography>
+        <Box sx={{ display: "flex", gap: 2, mt: 2 }}>
+          <TextField
+            label="ID"
+            value={newPatient.id}
+            onChange={(e) => setNewPatient({ ...newPatient, id: e.target.value })}
+          />
+          <TextField
+            label="Name"
+            value={newPatient.name}
+            onChange={(e) => setNewPatient({ ...newPatient, name: e.target.value })}
+          />
+          <TextField
+            select
+            label="Severity"
+            value={newPatient.severity}
+            onChange={(e) =>
+              setNewPatient({ ...newPatient, severity: e.target.value as "critical" | "medium" | "low" })
+            }
+          >
+            <MenuItem value="critical">Critical</MenuItem>
+            <MenuItem value="medium">Medium</MenuItem>
+            <MenuItem value="low">Low</MenuItem>
+          </TextField>
+          <TextField
+            label="Treatment (min)"
+            type="number"
+            value={newPatient.treatment_duration}
+            onChange={(e) =>
+              setNewPatient({ ...newPatient, treatment_duration: Number(e.target.value) })
+            }
+          />
+          <Button variant="contained" onClick={handleAddPatient}>Add</Button>
+        </Box>
+      </Paper>
 
       {/* Patient Queue */}
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h5" gutterBottom>Patient Queue</Typography>
-        <Box sx={{ overflowX: "auto" }}>
-          <TableContainer component={Paper}>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Patient</TableCell>
-                  <TableCell>Severity</TableCell>
-                  <TableCell>Status</TableCell>
+      <Typography variant="h6" gutterBottom>Patient Queue</Typography>
+      <TableContainer component={Paper} sx={{ mb: 4 }}>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell>Patient</TableCell>
+              <TableCell>Severity</TableCell>
+              <TableCell>Arrival Time</TableCell>
+              <TableCell>Status</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {sortedPatients.map((pid) => {
+              const patient = patients.find((p) => p.id === pid);
+              const assign = data.assignments.find((a) => a.patient_id === pid);
+              const status = assign ? "In Treatment" : "Waiting";
+              return (
+                <TableRow key={pid}>
+                  <TableCell>{patient?.name || pid}</TableCell>
+                  <TableCell>
+                    {patient && (
+                      <Chip
+                        label={patient.severity.toUpperCase()}
+                        sx={{ bgcolor: severityColors[patient.severity], color: "#000" }}
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell>{patient ? new Date(patient.arrival_time).toLocaleTimeString() : "-"}</TableCell>
+                  <TableCell>{status}</TableCell>
                 </TableRow>
-              </TableHead>
-              <TableBody>
-                {triage_order.map((pid: string) => {
-                  const assign = assignments.find((a: any) => a.patient_id === pid);
-                  const patient = patients.find((p) => p.id === pid);
-                  const status = assign ? "In Treatment" : "Waiting";
-                  return (
-                    <TableRow key={pid} sx={{ bgcolor: severityColor(patient?.severity || "") }}>
-                      <TableCell>{patient?.name || pid}</TableCell>
-                      <TableCell>{patient?.severity}</TableCell>
-                      <TableCell>{status}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Box>
-      </Box>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableContainer>
 
       {/* Staff Assignments */}
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h5" gutterBottom>Staff Assignments</Typography>
-        <Grid container spacing={2}>
-          {staff.map((s) => {
-            const currentAssignment = assignments.find((a: any) => a.doctor_id === s.id);
-            const patientName = patients.find((p) => p.id === currentAssignment?.patient_id)?.name || "None";
-            return (
-              <Grid item xs={12} sm={6} md={4} key={s.id}>
-                <Card>
-                  <CardContent>
-                    <Typography variant="h6">{s.name}</Typography>
-                    <Typography>Specialization: {s.specialization}</Typography>
-                    <Typography>Current Patient: {patientName}</Typography>
-                    <Typography>Wait Time: {currentAssignment?.wait_time_minutes || 0} min</Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
-            );
-          })}
-        </Grid>
-      </Box>
+      <Typography variant="h6" gutterBottom>Staff Assignments</Typography>
+      <TableContainer component={Paper}>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell>Doctor</TableCell>
+              <TableCell>Current Patient</TableCell>
+              <TableCell>Wait Time (min)</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {data.assignments.map((a, idx) => {
+              const doctor = staff.find((s) => s.id === a.doctor_id);
+              const patient = patients.find((p) => p.id === a.patient_id);
+              return (
+                <TableRow key={idx}>
+                  <TableCell>{doctor?.name || "N/A"}</TableCell>
+                  <TableCell>{patient?.name || a.patient_id}</TableCell>
+                  <TableCell>{a.wait_time_minutes}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableContainer>
 
-      {/* Summary Box */}
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="subtitle1">{summary}</Typography>
+      {/* Summary */}
+      <Paper sx={{ p: 2, mt: 3 }}>
+        <Typography variant="subtitle1">{data.summary}</Typography>
       </Paper>
     </Container>
   );
