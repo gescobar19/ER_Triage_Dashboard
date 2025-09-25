@@ -1,3 +1,24 @@
+# ER Triage Dashboard
+
+A React + AWS demo application for managing Emergency Room (ER) patient triage.  
+This dashboard allows you to visualize patient queues, staff assignments, and triage results. The app demonstrates React, TypeScript, Material-UI, and AWS Lambda integration for backend logic.
+
+---
+
+## Features
+
+- Display a dynamic patient queue with severity indicators.
+- Assign staff to patients and track wait times.
+- Add new patients through a form (simulated or via API).
+- Summary of triage results.
+- Responsive Material-UI dashboard design.
+
+---
+
+## Screenshot
+
+![Dashboard view](assets/dashboard.png)
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
