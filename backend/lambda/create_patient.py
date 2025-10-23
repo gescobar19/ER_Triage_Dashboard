@@ -5,29 +5,38 @@ from datetime import datetime
 
 # DynamoDB table
 dynamodb = boto3.resource("dynamodb")
-TABLE_NAME = os.environ.get("PATIENT_TABLE")  # make sure to set this in Lambda config
+TABLE_NAME = os.environ.get("PATIENT_TABLE")
 table = dynamodb.Table(TABLE_NAME)
+
+# Simple symptom-based severity determination
+def determine_severity(symptoms: str) -> str:
+    symptoms = symptoms.lower()
+    if any(x in symptoms for x in ["chest pain", "shortness of breath", "head injury"]):
+        return "critical"
+    elif any(x in symptoms for x in ["fever", "persistent cough", "abdominal pain"]):
+        return "medium"
+    else:
+        return "low"
 
 def lambda_handler(event, context):
     try:
-        # Parse request body
         body = json.loads(event.get("body", "{}"))
-        required_fields = ["id", "name", "severity", "treatment_duration"]
+        required_fields = ["id", "name", "symptoms", "treatment_duration"]
 
         # Validate input
         for field in required_fields:
             if field not in body:
                 return respond(400, {"error": f"Missing field: {field}"})
 
-        # Check severity
-        if body["severity"] not in ["critical", "medium", "low"]:
-            return respond(400, {"error": "Invalid severity. Must be 'critical', 'medium', or 'low'"})
+        # Determine severity automatically
+        severity = determine_severity(body["symptoms"])
 
         # Prepare patient item
         patient = {
             "id": body["id"],
             "name": body["name"],
-            "severity": body["severity"],
+            "symptoms": body["symptoms"],
+            "severity": severity,
             "arrival_time": body.get("arrival_time", datetime.utcnow().isoformat()),
             "treatment_duration": int(body["treatment_duration"])
         }
@@ -46,7 +55,7 @@ def respond(status_code, body):
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",          # CORS
+            "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
             "Access-Control-Allow-Headers": "Content-Type"
         },
