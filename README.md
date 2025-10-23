@@ -17,7 +17,8 @@ This dashboard allows you to visualize patient queues, staff assignments, and tr
 
 ## Screenshot
 
-![Dashboard view](assets/dashboard.png)
+![Dashboard view](assets/dashboard2.png)
+![Dashboard view](assets/dashboard1.png)
 
 # Getting Started with Create React App
 
